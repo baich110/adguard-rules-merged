@@ -1,0 +1,78 @@
+name: Update AdGuard Rules
+
+on:
+  schedule:
+    # 每 8 小时运行一次（UTC 0:00, 8:00, 16:00）
+    - cron: '0 0,8,16 * * *'
+  workflow_dispatch:  # 支持手动触发
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Merge and dedup rules
+        run: |
+          python3 merge_rules.py
+        env:
+          OUTDIR: release
+
+      - name: Show result
+        run: |
+          echo "=== 生成的文件 ==="
+          ls -lh release/
+          echo
+          echo "=== 各文件头 ==="
+          for f in release/part*.txt; do
+            echo "--- $f ---"
+            head -6 "$f"
+            echo
+          done
+
+      - name: Publish to release branch
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # 保存生成的文件到临时位置
+          mkdir -p /tmp/out
+          cp release/part*.txt /tmp/out/
+
+          # 切换到 release 分支（不存在则创建孤儿分支）
+          git checkout --orphan release-tmp 2>/dev/null || git checkout --orphan release-tmp
+          git rm -rf . --quiet 2>/dev/null || true
+          rm -rf ./* 2>/dev/null || true
+
+          cp /tmp/out/part*.txt .
+          ls -lh part*.txt
+
+          git add part*.txt
+          git commit -m "Update rules $(date -u '+%Y-%m-%d %H:%M UTC')" || echo "no changes"
+
+          # 强制推送到 release 分支
+          git push origin HEAD:release --force
+
+      - name: Summary
+        run: |
+          echo "### AdGuard 规则已更新" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| 文件 | 大小 |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          for f in release/part*.txt; do
+            echo "| $(basename $f) | $(du -h $f | cut -f1) |" >> $GITHUB_STEP_SUMMARY
+          done
